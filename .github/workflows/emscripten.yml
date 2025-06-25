@@ -19,7 +19,7 @@ env:
   # "info" field, or in Makefile.envs:
   # https://github.com/pyodide/pyodide/blob/main/Makefile.envs#L2
   PYTHON_VERSION: 3.12.7
-  EMSCRIPTEN_VERSION: 3.1.58
+  EMSCRIPTEN_VERSION: 4.0.10
   EM_CACHE_FOLDER: emsdk-cache
 
 jobs:
@@ -77,6 +77,18 @@ jobs:
           exit $?
 
   build:
+    strategy:
+      matrix:
+        flags:
+          - name: wasm
+            cflags:
+            ldflags:
+          - name: wasm-memory64-1
+            cflags: -sMEMORY64=1
+            ldflags: -sMEMORY64=1 -sWASM_BIGINT
+          - name: wasm-memory64-2
+            cflags: -sMEMORY64=2
+            ldflags: -sMEMORY64=2 -sWASM_BIGINT
     runs-on: ubuntu-24.04
     needs: [setup-emsdk-cache]
     steps:
@@ -100,6 +112,9 @@ jobs:
 
       - name: Build
         run: ./testsuite/emscripten/build.sh
+        env:
+          EXTRA_CFLAGS: ${{ matrix.flags.cflags }}
+          EXTRA_LD_FLAGS: ${{ matrix.flags.ldflags }}
 
       - name: Build tests
         run: |
@@ -107,16 +122,23 @@ jobs:
           cp -r testsuite/libffi.closures testsuite/libffi.closures.test
           ./testsuite/emscripten/build-tests.sh testsuite/libffi.call.test
           ./testsuite/emscripten/build-tests.sh testsuite/libffi.closures.test
+        env:
+          EXTRA_CFLAGS: ${{ matrix.flags.cflags }}
+          EXTRA_LD_FLAGS: ${{ matrix.flags.ldflags }}
 
       - name: Store artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: built-tests
+          name: built-tests-${{ matrix.flags.name }}
           path: ./testsuite/libffi.c*/
 
   test:
     strategy:
       matrix:
+        flags:
+          - name: wasm
+          - name: wasm-memory64-1
+          - name: wasm-memory64-2
         browser: ["chrome"]
         # FIXME: selenium can't find gecko driver for "firefox"
     runs-on: ubuntu-24.04
@@ -128,7 +150,7 @@ jobs:
       - name: Download build artifact
         uses: actions/download-artifact@v4
         with:
-          name: built-tests
+          name: built-tests-${{ matrix.flags.name }}
           path: ./testsuite/
 
       - uses: conda-incubator/setup-miniconda@v3

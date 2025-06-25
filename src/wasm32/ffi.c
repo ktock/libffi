@@ -43,32 +43,92 @@
 
 EM_JS_DEPS(libffi, "$getWasmTableEntry,$setWasmTableEntry,$getEmptyTableSlot,$convertJsFunctionToWasm");
 
-#define DEREF_U8(addr, offset) HEAPU8[addr + offset]
-#define DEREF_S8(addr, offset) HEAP8[addr + offset]
-#define DEREF_U16(addr, offset) HEAPU16[(addr >> 1) + offset]
-#define DEREF_S16(addr, offset) HEAP16[(addr >> 1) + offset]
-#define DEREF_U32(addr, offset) HEAPU32[(addr >> 2) + offset]
-#define DEREF_S32(addr, offset) HEAP32[(addr >> 2) + offset]
+#define TARGET_PTR_SIZE __SIZEOF_POINTER__
 
-#define DEREF_F32(addr, offset) HEAPF32[(addr >> 2) + offset]
-#define DEREF_F64(addr, offset) HEAPF64[(addr >> 3) + offset]
-#define DEREF_U64(addr, offset) HEAPU64[(addr >> 3) + offset]
+#if TARGET_PTR_SIZE == 8
+#define ADDR(a) BigInt(a)
+#define PTR_SIG 'j'
+#define FFI_EMSCRIPTEN_ABI FFI_WASM64_EMSCRIPTEN
+#elif TARGET_PTR_SIZE == 4
+#define ADDR(a) a
+#define PTR_SIG 'i'
+#define FFI_EMSCRIPTEN_ABI FFI_WASM32_EMSCRIPTEN
+#else
+#error "Unknown pointer size"
+#endif
+
+#define DEREF_U8(addr, offset) HEAPU8[addr + ADDR(offset)]
+#define DEREF_S8(addr, offset) HEAP8[addr + ADDR(offset)]
+#define DEREF_U16(addr, offset) HEAPU16[(addr >> ADDR(1)) + ADDR(offset)]
+#define DEREF_S16(addr, offset) HEAP16[(addr >>  ADDR(1)) + ADDR(offset)]
+#define DEREF_U32(addr, offset) HEAPU32[(addr >>  ADDR(2)) + ADDR(offset)]
+#define DEREF_S32(addr, offset) HEAP32[(addr >>  ADDR(2)) + ADDR(offset)]
+
+#define DEREF_F32(addr, offset) HEAPF32[(addr >>  ADDR(2)) + ADDR(offset)]
+#define DEREF_F64(addr, offset) HEAPF64[(addr >>  ADDR(3)) + ADDR(offset)]
+#define DEREF_U64(addr, offset) HEAPU64[(addr >>  ADDR(3)) + ADDR(offset)]
 
 #define CHECK_FIELD_OFFSET(struct, field, offset)                                  \
   _Static_assert(                                                                  \
     offsetof(struct, field) == offset,                                             \
     "Memory layout of '" #struct "' has changed: '" #field "' is in an unexpected location");
 
+#if TARGET_PTR_SIZE == 8
+
+#define DEREF_PTR(addr, offset) DEREF_U64(addr, offset)
+#define NULL_PTR BigInt(0)
+
+CHECK_FIELD_OFFSET(ffi_cif, abi, 0);
+CHECK_FIELD_OFFSET(ffi_cif, nargs, 4);
+CHECK_FIELD_OFFSET(ffi_cif, arg_types, 8);
+CHECK_FIELD_OFFSET(ffi_cif, rtype, 16);
+CHECK_FIELD_OFFSET(ffi_cif, flags, 28);
+CHECK_FIELD_OFFSET(ffi_cif, nfixedargs, 32);
+
+#define CIF__ABI(addr) DEREF_U32(addr, 0)
+#define CIF__NARGS(addr) DEREF_U32(addr +  BigInt(4),  0)
+#define CIF__ARGTYPES(addr) DEREF_U64(addr +  BigInt(8),  0)
+#define CIF__RTYPE(addr) DEREF_U64(addr +  BigInt(16), 0)
+#define CIF__FLAGS(addr) DEREF_U32(addr +  BigInt(28), 0)
+#define CIF__NFIXEDARGS(addr) DEREF_U32(addr +  BigInt(32), 0)
+
+CHECK_FIELD_OFFSET(ffi_type, size, 0);
+CHECK_FIELD_OFFSET(ffi_type, alignment, 8);
+CHECK_FIELD_OFFSET(ffi_type, type, 10);
+CHECK_FIELD_OFFSET(ffi_type, elements, 16);
+
+#define FFI_TYPE__SIZE(addr) DEREF_U64(addr, 0)
+#define FFI_TYPE__ALIGN(addr) DEREF_U16(addr + BigInt(8), 0)
+#define FFI_TYPE__TYPEID(addr) DEREF_U16(addr + BigInt(10), 0)
+#define FFI_TYPE__ELEMENTS(addr) DEREF_U64(addr + BigInt(16), 0)
+
+#define ALIGN_ADDRESS(addr, align) (addr &= (~((BigInt(align)) - BigInt(1))))
+#define STACK_ALLOC(stack, size, align) ((stack -= (BigInt(size))), ALIGN_ADDRESS(stack, BigInt(align)))
+
+#define STACK_SAVE() BigInt(stackSave())
+#define GET_EMPTY_TABLE_SLOT() BigInt(getEmptyTableSlot())
+#define MALLOC(size) BigInt(_malloc(size));
+
+#define NARGS_LEN(nargs) BigInt(TARGET_PTR_SIZE * nargs)
+#define TARGET_PTR_ADDEND BigInt(8)
+
+#elif TARGET_PTR_SIZE == 4
+
+#define DEREF_PTR(addr, offset) DEREF_U32(addr, offset)
+#define NULL_PTR 0
+
 CHECK_FIELD_OFFSET(ffi_cif, abi, 4*0);
 CHECK_FIELD_OFFSET(ffi_cif, nargs, 4*1);
 CHECK_FIELD_OFFSET(ffi_cif, arg_types, 4*2);
 CHECK_FIELD_OFFSET(ffi_cif, rtype, 4*3);
+CHECK_FIELD_OFFSET(ffi_cif, flags, 4*5);
 CHECK_FIELD_OFFSET(ffi_cif, nfixedargs, 4*6);
 
 #define CIF__ABI(addr) DEREF_U32(addr, 0)
 #define CIF__NARGS(addr) DEREF_U32(addr, 1)
 #define CIF__ARGTYPES(addr) DEREF_U32(addr, 2)
 #define CIF__RTYPE(addr) DEREF_U32(addr, 3)
+#define CIF__FLAGS(addr) DEREF_U32(addr, 5)
 #define CIF__NFIXEDARGS(addr) DEREF_U32(addr, 6)
 
 CHECK_FIELD_OFFSET(ffi_type, size, 0);
@@ -83,6 +143,17 @@ CHECK_FIELD_OFFSET(ffi_type, elements, 8);
 
 #define ALIGN_ADDRESS(addr, align) (addr &= (~((align) - 1)))
 #define STACK_ALLOC(stack, size, align) ((stack -= (size)), ALIGN_ADDRESS(stack, align))
+
+#define STACK_SAVE() stackSave()
+#define GET_EMPTY_TABLE_SLOT() getEmptyTableSlot()
+#define MALLOC(size) _malloc(size);
+
+#define NARGS_LEN(nargs) (TARGET_PTR_SIZE * nargs)
+#define TARGET_PTR_ADDEND 4
+
+#else
+#error "Unknown pointer size"
+#endif
 
 // Most wasm runtimes support at most 1000 Js trampoline args.
 #define MAX_ARGS 1000
@@ -100,7 +171,7 @@ _Static_assert(FFI_BAD_TYPEDEF_MACRO == FFI_BAD_TYPEDEF, "FFI_BAD_TYPEDEF must b
 ffi_status FFI_HIDDEN
 ffi_prep_cif_machdep(ffi_cif *cif)
 {
-  if (cif->abi != FFI_WASM32_EMSCRIPTEN)
+  if (cif->abi != FFI_EMSCRIPTEN_ABI)
     return FFI_BAD_ABI;
   // This is called after ffi_prep_cif_machdep_var so we need to avoid
   // overwriting cif->nfixedargs.
@@ -160,11 +231,11 @@ unbox_small_structs, (ffi_type type_ptr), {
       break;
     }
     var elements = FFI_TYPE__ELEMENTS(type_ptr);
-    var first_element = DEREF_U32(elements, 0);
-    if (first_element === 0) {
+    var first_element = DEREF_PTR(elements, 0);
+    if (first_element === NULL_PTR) {
       type_id = FFI_TYPE_VOID;
       break;
-    } else if (DEREF_U32(elements, 1) === 0) {
+    } else if (DEREF_PTR(elements, 1) === NULL_PTR) {
       type_ptr = first_element;
       type_id = FFI_TYPE__TYPEID(first_element);
     } else {
@@ -182,10 +253,11 @@ ffi_call_js, (ffi_cif *cif, ffi_fp fn, void *rvalue, void **avalue),
   var nargs = CIF__NARGS(cif);
   var nfixedargs = CIF__NFIXEDARGS(cif);
   var arg_types_ptr = CIF__ARGTYPES(cif);
+  var flags = CIF__FLAGS(cif);
   var rtype_unboxed = unbox_small_structs(CIF__RTYPE(cif));
   var rtype_ptr = rtype_unboxed[0];
   var rtype_id = rtype_unboxed[1];
-  var orig_stack_ptr = stackSave();
+  var orig_stack_ptr = STACK_SAVE();
   var cur_stack_ptr = orig_stack_ptr;
 
   var args = [];
@@ -214,8 +286,8 @@ ffi_call_js, (ffi_cif *cif, ffi_fp fn, void *rvalue, void **avalue),
   // Javascript to C automatically, here we manually do the inverse conversion
   // from C to Javascript.
   for (var i = 0; i < nfixedargs; i++) {
-    var arg_ptr = DEREF_U32(avalue, i);
-    var arg_unboxed = unbox_small_structs(DEREF_U32(arg_types_ptr, i));
+    var arg_ptr = DEREF_PTR(avalue, i);
+    var arg_unboxed = unbox_small_structs(DEREF_PTR(arg_types_ptr, i));
     var arg_type_ptr = arg_unboxed[0];
     var arg_type_id = arg_unboxed[1];
 
@@ -226,7 +298,6 @@ ffi_call_js, (ffi_cif *cif, ffi_fp fn, void *rvalue, void **avalue),
     case FFI_TYPE_INT:
     case FFI_TYPE_SINT32:
     case FFI_TYPE_UINT32:
-    case FFI_TYPE_POINTER:
       args.push(DEREF_U32(arg_ptr, 0));
       break;
     case FFI_TYPE_FLOAT:
@@ -263,8 +334,11 @@ ffi_call_js, (ffi_cif *cif, ffi_fp fn, void *rvalue, void **avalue),
       var size = FFI_TYPE__SIZE(arg_type_ptr);
       var align = FFI_TYPE__ALIGN(arg_type_ptr);
       STACK_ALLOC(cur_stack_ptr, size, align);
-      HEAP8.subarray(cur_stack_ptr, cur_stack_ptr+size).set(HEAP8.subarray(arg_ptr, arg_ptr + size));
+      HEAP8.subarray(Number(cur_stack_ptr), Number(cur_stack_ptr+size)).set(HEAP8.subarray(Number(arg_ptr), Number(arg_ptr + size)));
       args.push(cur_stack_ptr);
+      break;
+    case FFI_TYPE_POINTER:
+      args.push(DEREF_PTR(arg_ptr, 0));
       break;
     case FFI_TYPE_COMPLEX:
       throw new Error('complex marshalling nyi');
@@ -282,11 +356,11 @@ ffi_call_js, (ffi_cif *cif, ffi_fp fn, void *rvalue, void **avalue),
   // We don't have any way of knowing how many args were actually passed, so we
   // just always copy extra nonsense past the end. The ownwards call will know
   // not to look at it.
-  if (nfixedargs != nargs) {
+  if (flags & VARARGS_FLAG) {
     var struct_arg_info = [];
     for (var i = nargs - 1;  i >= nfixedargs; i--) {
-      var arg_ptr = DEREF_U32(avalue, i);
-      var arg_unboxed = unbox_small_structs(DEREF_U32(arg_types_ptr, i));
+      var arg_ptr = DEREF_PTR(avalue, i);
+      var arg_unboxed = unbox_small_structs(DEREF_PTR(arg_types_ptr, i));
       var arg_type_ptr = arg_unboxed[0];
       var arg_type_id = arg_unboxed[1];
       switch (arg_type_id) {
@@ -303,7 +377,6 @@ ffi_call_js, (ffi_cif *cif, ffi_fp fn, void *rvalue, void **avalue),
       case FFI_TYPE_INT:
       case FFI_TYPE_UINT32:
       case FFI_TYPE_SINT32:
-      case FFI_TYPE_POINTER:
       case FFI_TYPE_FLOAT:
         STACK_ALLOC(cur_stack_ptr, 4, 4);
         DEREF_U32(cur_stack_ptr, 0) = DEREF_U32(arg_ptr, 0);
@@ -326,8 +399,12 @@ ffi_call_js, (ffi_cif *cif, ffi_fp fn, void *rvalue, void **avalue),
         // Again, struct must be passed by pointer.
         // But ABI is by value, so have to copy struct onto stack.
         // Currently arguments are going onto stack so we can't put it there now. Come back for this.
-        STACK_ALLOC(cur_stack_ptr, 4, 4);
+        STACK_ALLOC(cur_stack_ptr, TARGET_PTR_SIZE, TARGET_PTR_SIZE);
         struct_arg_info.push([cur_stack_ptr, arg_ptr, FFI_TYPE__SIZE(arg_type_ptr), FFI_TYPE__ALIGN(arg_type_ptr)]);
+        break;
+      case FFI_TYPE_POINTER:
+        STACK_ALLOC(cur_stack_ptr, TARGET_PTR_SIZE, TARGET_PTR_SIZE);
+        DEREF_PTR(cur_stack_ptr, 0) = DEREF_PTR(arg_ptr, 0);
         break;
       case FFI_TYPE_COMPLEX:
         throw new Error('complex arg marshalling nyi');
@@ -345,8 +422,8 @@ ffi_call_js, (ffi_cif *cif, ffi_fp fn, void *rvalue, void **avalue),
       var size = struct_info[2];
       var align = struct_info[3];
       STACK_ALLOC(cur_stack_ptr, size, align);
-      HEAP8.subarray(cur_stack_ptr, cur_stack_ptr+size).set(HEAP8.subarray(arg_ptr, arg_ptr + size));
-      DEREF_U32(arg_target, 0) = cur_stack_ptr;
+      HEAP8.subarray(Number(cur_stack_ptr), Number(cur_stack_ptr+size)).set(HEAP8.subarray(Number(arg_ptr), Number(arg_ptr + size)));
+      DEREF_PTR(arg_target, 0) = cur_stack_ptr;
     }
   }
   stackRestore(cur_stack_ptr);
@@ -371,7 +448,6 @@ ffi_call_js, (ffi_cif *cif, ffi_fp fn, void *rvalue, void **avalue),
   case FFI_TYPE_INT:
   case FFI_TYPE_UINT32:
   case FFI_TYPE_SINT32:
-  case FFI_TYPE_POINTER:
     DEREF_U32(rvalue, 0) = result;
     break;
   case FFI_TYPE_FLOAT:
@@ -392,6 +468,9 @@ ffi_call_js, (ffi_cif *cif, ffi_fp fn, void *rvalue, void **avalue),
   case FFI_TYPE_SINT64:
     DEREF_U64(rvalue, 0) = result;
     break;
+  case FFI_TYPE_POINTER:
+    DEREF_PTR(rvalue, 0) = result;
+    break;
   case FFI_TYPE_COMPLEX:
     throw new Error('complex ret marshalling nyi');
   default:
@@ -403,6 +482,20 @@ void ffi_call(ffi_cif *cif, void (*fn)(void), void *rvalue, void **avalue) {
   ffi_call_js(cif, fn, rvalue, avalue);
 }
 
+#if TARGET_PTR_SIZE == 8
+
+CHECK_FIELD_OFFSET(ffi_closure, ftramp, 0);
+CHECK_FIELD_OFFSET(ffi_closure, cif, 8);
+CHECK_FIELD_OFFSET(ffi_closure, fun, 16);
+CHECK_FIELD_OFFSET(ffi_closure, user_data, 24);
+
+#define CLOSURE__wrapper(addr) DEREF_U64(addr, 0)
+#define CLOSURE__cif(addr) DEREF_U64(addr, 1)
+#define CLOSURE__fun(addr) DEREF_U64(addr, 2)
+#define CLOSURE__user_data(addr) DEREF_U64(addr, 3)
+
+#elif TARGET_PTR_SIZE == 4
+
 CHECK_FIELD_OFFSET(ffi_closure, ftramp, 4*0);
 CHECK_FIELD_OFFSET(ffi_closure, cif, 4*1);
 CHECK_FIELD_OFFSET(ffi_closure, fun, 4*2);
@@ -413,10 +506,14 @@ CHECK_FIELD_OFFSET(ffi_closure, user_data, 4*3);
 #define CLOSURE__fun(addr) DEREF_U32(addr, 2)
 #define CLOSURE__user_data(addr) DEREF_U32(addr, 3)
 
+#else
+#error "Unknown pointer size"
+#endif
+
 EM_JS_MACROS(void *, ffi_closure_alloc_js, (size_t size, void **code), {
-  var closure = _malloc(size);
-  var index = getEmptyTableSlot();
-  DEREF_U32(code, 0) = index;
+  var closure = MALLOC(size);
+  var index = GET_EMPTY_TABLE_SLOT();
+  DEREF_PTR(code, 0) = index;
   CLOSURE__wrapper(closure) = index;
   return closure;
 })
@@ -461,7 +558,7 @@ ffi_prep_closure_loc_js,
   case FFI_TYPE_STRUCT:
   case FFI_TYPE_LONGDOUBLE:
     // Return via a first pointer argument.
-    sig = 'vi';
+    sig = 'v' + PTR_SIG;
     ret_by_arg = true;
     break;
   case FFI_TYPE_INT:
@@ -471,7 +568,6 @@ ffi_prep_closure_loc_js,
   case FFI_TYPE_SINT16:
   case FFI_TYPE_UINT32:
   case FFI_TYPE_SINT32:
-  case FFI_TYPE_POINTER:
     sig = 'i';
     break;
   case FFI_TYPE_FLOAT:
@@ -484,6 +580,9 @@ ffi_prep_closure_loc_js,
   case FFI_TYPE_SINT64:
     sig = 'j';
     break;
+  case FFI_TYPE_POINTER:
+    sig = PTR_SIG;
+    break;
   case FFI_TYPE_COMPLEX:
     throw new Error('complex ret marshalling nyi');
   default:
@@ -492,7 +591,7 @@ ffi_prep_closure_loc_js,
   var unboxed_arg_type_id_list = [];
   var unboxed_arg_type_info_list = [];
   for (var i = 0; i < nargs; i++) {
-    var arg_unboxed = unbox_small_structs(DEREF_U32(arg_types_ptr, i));
+    var arg_unboxed = unbox_small_structs(DEREF_PTR(arg_types_ptr, i));
     var arg_type_ptr = arg_unboxed[0];
     var arg_type_id = arg_unboxed[1];
     unboxed_arg_type_id_list.push(arg_type_id);
@@ -507,8 +606,6 @@ ffi_prep_closure_loc_js,
     case FFI_TYPE_SINT16:
     case FFI_TYPE_UINT32:
     case FFI_TYPE_SINT32:
-    case FFI_TYPE_POINTER:
-    case FFI_TYPE_STRUCT:
       sig += 'i';
       break;
     case FFI_TYPE_FLOAT:
@@ -524,6 +621,10 @@ ffi_prep_closure_loc_js,
     case FFI_TYPE_SINT64:
       sig += 'j';
       break;
+    case FFI_TYPE_STRUCT:
+    case FFI_TYPE_POINTER:
+      sig += PTR_SIG;
+      break;
     case FFI_TYPE_COMPLEX:
       throw new Error('complex marshalling nyi');
     default:
@@ -532,13 +633,13 @@ ffi_prep_closure_loc_js,
   }
   if (nfixedargs < nargs) {
     // extra pointer to varargs stack
-    sig += 'i';
+    sig += PTR_SIG;
   }
   LOG_DEBUG("CREATE_CLOSURE", "sig:", sig);
   function trampoline() {
     var args = Array.prototype.slice.call(arguments);
     var size = 0;
-    var orig_stack_ptr = stackSave();
+    var orig_stack_ptr = STACK_SAVE();
     var cur_ptr = orig_stack_ptr;
     var ret_ptr;
     var jsarg_idx = 0;
@@ -551,7 +652,7 @@ ffi_prep_closure_loc_js,
       STACK_ALLOC(cur_ptr, 8, 8);
       ret_ptr = cur_ptr;
     }
-    cur_ptr -= 4 * nargs;
+    cur_ptr -= NARGS_LEN(nargs);
     var args_ptr = cur_ptr;
     var carg_idx = 0;
     // Here we either have the actual argument, or a pair of BigInts for long
@@ -572,53 +673,57 @@ ffi_prep_closure_loc_js,
       case FFI_TYPE_SINT8:
         // Bad things happen if we don't align to 4 here
         STACK_ALLOC(cur_ptr, 1, 4);
-        DEREF_U32(args_ptr, carg_idx) = cur_ptr;
+        DEREF_PTR(args_ptr, carg_idx) = cur_ptr;
         DEREF_U8(cur_ptr, 0) = cur_arg;
         break;
       case FFI_TYPE_UINT16:
       case FFI_TYPE_SINT16:
         // Bad things happen if we don't align to 4 here
         STACK_ALLOC(cur_ptr, 2, 4);
-        DEREF_U32(args_ptr, carg_idx) = cur_ptr;
+        DEREF_PTR(args_ptr, carg_idx) = cur_ptr;
         DEREF_U16(cur_ptr, 0) = cur_arg;
         break;
       case FFI_TYPE_INT:
       case FFI_TYPE_UINT32:
       case FFI_TYPE_SINT32:
-      case FFI_TYPE_POINTER:
         STACK_ALLOC(cur_ptr, 4, 4);
-        DEREF_U32(args_ptr, carg_idx) = cur_ptr;
+        DEREF_PTR(args_ptr, carg_idx) = cur_ptr;
         DEREF_U32(cur_ptr, 0) = cur_arg;
         break;
       case FFI_TYPE_STRUCT:
         // cur_arg is already a pointer to struct
         // copy it onto stack to pass by value
         STACK_ALLOC(cur_ptr, arg_size, arg_align);
-        HEAP8.subarray(cur_ptr, cur_ptr + arg_size).set(HEAP8.subarray(cur_arg, cur_arg + arg_size));
-        DEREF_U32(args_ptr, carg_idx) = cur_ptr;
+        HEAP8.subarray(Number(cur_ptr), Number(cur_ptr + arg_size)).set(HEAP8.subarray(Number(cur_arg), Number(cur_arg + arg_size)));
+        DEREF_PTR(args_ptr, carg_idx) = cur_ptr;
         break;
       case FFI_TYPE_FLOAT:
         STACK_ALLOC(cur_ptr, 4, 4);
-        DEREF_U32(args_ptr, carg_idx) = cur_ptr;
+        DEREF_PTR(args_ptr, carg_idx) = cur_ptr;
         DEREF_F32(cur_ptr, 0) = cur_arg;
         break;
       case FFI_TYPE_DOUBLE:
         STACK_ALLOC(cur_ptr, 8, 8);
-        DEREF_U32(args_ptr, carg_idx) = cur_ptr;
+        DEREF_PTR(args_ptr, carg_idx) = cur_ptr;
         DEREF_F64(cur_ptr, 0) = cur_arg;
         break;
       case FFI_TYPE_UINT64:
       case FFI_TYPE_SINT64:
         STACK_ALLOC(cur_ptr, 8, 8);
-        DEREF_U32(args_ptr, carg_idx) = cur_ptr;
+        DEREF_PTR(args_ptr, carg_idx) = cur_ptr;
         DEREF_U64(cur_ptr, 0) = cur_arg;
         break;
       case FFI_TYPE_LONGDOUBLE:
         STACK_ALLOC(cur_ptr, 16, 8);
-        DEREF_U32(args_ptr, carg_idx) = cur_ptr;
+        DEREF_PTR(args_ptr, carg_idx) = cur_ptr;
         DEREF_U64(cur_ptr, 0) = cur_arg;
         cur_arg = args[jsarg_idx++];
         DEREF_U64(cur_ptr, 1) = cur_arg;
+        break;
+      case FFI_TYPE_POINTER:
+        STACK_ALLOC(cur_ptr, TARGET_PTR_SIZE, TARGET_PTR_SIZE);
+        DEREF_PTR(args_ptr, carg_idx) = cur_ptr;
+        DEREF_PTR(cur_ptr, 0) = cur_arg;
         break;
       }
     }
@@ -639,14 +744,14 @@ ffi_prep_closure_loc_js,
       if (arg_type_id === FFI_TYPE_STRUCT) {
         // In this case varargs is a pointer to pointer to struct so we need to
         // deref once
-        var struct_ptr = DEREF_U32(varargs, 0);
+        var struct_ptr = DEREF_PTR(varargs, 0);
         STACK_ALLOC(cur_ptr, arg_size, arg_align);
-        HEAP8.subarray(cur_ptr, cur_ptr + arg_size).set(HEAP8.subarray(struct_ptr, struct_ptr + arg_size));
-        DEREF_U32(args_ptr, carg_idx) = cur_ptr;
+        HEAP8.subarray(Number(cur_ptr), Number(cur_ptr + arg_size)).set(HEAP8.subarray(Number(struct_ptr), Number(struct_ptr + arg_size)));
+        DEREF_PTR(args_ptr, carg_idx) = cur_ptr;
       } else {
-        DEREF_U32(args_ptr, carg_idx) = varargs;
+        DEREF_PTR(args_ptr, carg_idx) = varargs;
       }
-      varargs += 4;
+      varargs += TARGET_PTR_ADDEND;
     }
     stackRestore(cur_ptr);
     stackAlloc(0); // stackAlloc enforces alignment invariants on the stack pointer
@@ -676,7 +781,7 @@ ffi_prep_closure_loc_js,
   } catch(e) {
     return FFI_BAD_TYPEDEF_MACRO;
   }
-  setWasmTableEntry(codeloc, wasm_trampoline);
+  setWasmTableEntry(Number(codeloc), wasm_trampoline);
   CLOSURE__cif(closure) = cif;
   CLOSURE__fun(closure) = fun;
   CLOSURE__user_data(closure) = user_data;
@@ -688,7 +793,7 @@ ffi_prep_closure_loc_js,
 ffi_status ffi_prep_closure_loc(ffi_closure *closure, ffi_cif *cif,
                                 void (*fun)(ffi_cif *, void *, void **, void *),
                                 void *user_data, void *codeloc) {
-  if (cif->abi != FFI_WASM32_EMSCRIPTEN)
+  if (cif->abi != FFI_EMSCRIPTEN_ABI)
     return FFI_BAD_ABI;
   return ffi_prep_closure_loc_js(closure, cif, (void *)fun, user_data,
                                      codeloc);

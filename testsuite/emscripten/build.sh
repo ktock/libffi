@@ -26,9 +26,10 @@ while [ $# -gt 0 ]; do
 done
 
 # Common compiler flags
-export CFLAGS="-O3 -fPIC"
+export CFLAGS="-O3 -fPIC $EXTRA_CFLAGS"
 if [ "$DEBUG" = "true" ]; then export CFLAGS+=" -DDEBUG_F"; fi
 export CXXFLAGS="$CFLAGS"
+export LDFLAGS="$EXTRA_LD_FLAGS"
 
 # Build paths
 export CPATH="$TARGET/include"

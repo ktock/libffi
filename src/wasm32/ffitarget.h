@@ -32,6 +32,8 @@
 #error "Please do not include ffitarget.h directly into your source.  Use ffi.h instead."
 #endif
 
+#define TARGET_PTR_SIZE __SIZEOF_POINTER__
+
 /* ---- Generic type definitions ----------------------------------------- */
 
 typedef unsigned long ffi_arg;
@@ -42,19 +44,36 @@ typedef void (*ffi_fp)(void);
 
 typedef enum ffi_abi {
   FFI_FIRST_ABI = 0,
+#if TARGET_PTR_SIZE == 8
+  FFI_WASM64, // "raw", no structures, varargs, or closures (not implemented!)
+  FFI_WASM64_EMSCRIPTEN, // structures, varargs, and split 64-bit params
+#elif TARGET_PTR_SIZE == 4
   FFI_WASM32, // "raw", no structures, varargs, or closures (not implemented!)
   FFI_WASM32_EMSCRIPTEN, // structures, varargs, and split 64-bit params
+#else
+#error "Unknown pointer size"
+#endif
   FFI_LAST_ABI,
+#if TARGET_PTR_SIZE == 8
+#ifdef __EMSCRIPTEN__
+  FFI_DEFAULT_ABI = FFI_WASM64_EMSCRIPTEN
+#else
+  FFI_DEFAULT_ABI = FFI_WASM64
+#endif
+#elif TARGET_PTR_SIZE == 4
 #ifdef __EMSCRIPTEN__
   FFI_DEFAULT_ABI = FFI_WASM32_EMSCRIPTEN
 #else
   FFI_DEFAULT_ABI = FFI_WASM32
 #endif
+#else
+#error "Unknown pointer size"
+#endif
 } ffi_abi;
 
 #define FFI_CLOSURES 1
 // #define FFI_GO_CLOSURES 0
-#define FFI_TRAMPOLINE_SIZE 4
+#define FFI_TRAMPOLINE_SIZE TARGET_PTR_SIZE
 // #define FFI_NATIVE_RAW_API 0
 #define FFI_TARGET_SPECIFIC_VARIADIC 1
 #define FFI_EXTRA_CIF_FIELDS  unsigned int nfixedargs
