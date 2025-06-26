@@ -76,7 +76,7 @@ EM_JS_DEPS(libffi, "$getWasmTableEntry,$setWasmTableEntry,$getEmptyTableSlot,$co
 #if TARGET_PTR_SIZE == 8
 
 #define DEREF_PTR(addr, offset) DEREF_U64(addr, offset)
-#define NULL_PTR BigInt(0)
+#define NULL_PTR 0n
 
 CHECK_FIELD_OFFSET(ffi_cif, abi, 0);
 CHECK_FIELD_OFFSET(ffi_cif, nargs, 4);
@@ -86,11 +86,11 @@ CHECK_FIELD_OFFSET(ffi_cif, flags, 28);
 CHECK_FIELD_OFFSET(ffi_cif, nfixedargs, 32);
 
 #define CIF__ABI(addr) DEREF_U32(addr, 0)
-#define CIF__NARGS(addr) DEREF_U32(addr +  BigInt(4),  0)
-#define CIF__ARGTYPES(addr) DEREF_U64(addr +  BigInt(8),  0)
-#define CIF__RTYPE(addr) DEREF_U64(addr +  BigInt(16), 0)
-#define CIF__FLAGS(addr) DEREF_U32(addr +  BigInt(28), 0)
-#define CIF__NFIXEDARGS(addr) DEREF_U32(addr +  BigInt(32), 0)
+#define CIF__NARGS(addr) DEREF_U32(addr + 4n,  0)
+#define CIF__ARGTYPES(addr) DEREF_U64(addr + 8n,  0)
+#define CIF__RTYPE(addr) DEREF_U64(addr + 16n, 0)
+#define CIF__FLAGS(addr) DEREF_U32(addr + 28n, 0)
+#define CIF__NFIXEDARGS(addr) DEREF_U32(addr + 32n, 0)
 
 CHECK_FIELD_OFFSET(ffi_type, size, 0);
 CHECK_FIELD_OFFSET(ffi_type, alignment, 8);
@@ -98,19 +98,25 @@ CHECK_FIELD_OFFSET(ffi_type, type, 10);
 CHECK_FIELD_OFFSET(ffi_type, elements, 16);
 
 #define FFI_TYPE__SIZE(addr) DEREF_U64(addr, 0)
-#define FFI_TYPE__ALIGN(addr) DEREF_U16(addr + BigInt(8), 0)
-#define FFI_TYPE__TYPEID(addr) DEREF_U16(addr + BigInt(10), 0)
-#define FFI_TYPE__ELEMENTS(addr) DEREF_U64(addr + BigInt(16), 0)
+#define FFI_TYPE__ALIGN(addr) DEREF_U16(addr + 8n, 0)
+#define FFI_TYPE__TYPEID(addr) DEREF_U16(addr + 10n, 0)
+#define FFI_TYPE__ELEMENTS(addr) DEREF_U64(addr + 16n, 0)
 
-#define ALIGN_ADDRESS(addr, align) (addr &= (~((BigInt(align)) - BigInt(1))))
-#define STACK_ALLOC(stack, size, align) ((stack -= (BigInt(size))), ALIGN_ADDRESS(stack, BigInt(align)))
+#define ALIGN_ADDRESS(addr, align) (addr &= (~((BigInt(align)) - 1n)))
+#define STACK_ALLOC(stack, size, align) ((stack -= (BigInt(size))), ALIGN_ADDRESS(stack, align))
 
 #define STACK_SAVE() BigInt(stackSave())
 #define GET_EMPTY_TABLE_SLOT() BigInt(getEmptyTableSlot())
 #define MALLOC(size) BigInt(_malloc(size));
 
 #define NARGS_LEN(nargs) BigInt(TARGET_PTR_SIZE * nargs)
-#define TARGET_PTR_ADDEND BigInt(8)
+#define TARGET_PTR_ADDEND 8n
+
+// BigInt indices can't be used for the subarray method.
+#define COPY_HEAP8(src, dst, size)              \
+  for (let i = 0n; i < size; i++) {             \
+    HEAP8[dst + i] = HEAP8[src + i];            \
+  }
 
 #elif TARGET_PTR_SIZE == 4
 
@@ -150,6 +156,8 @@ CHECK_FIELD_OFFSET(ffi_type, elements, 8);
 
 #define NARGS_LEN(nargs) (TARGET_PTR_SIZE * nargs)
 #define TARGET_PTR_ADDEND 4
+
+#define COPY_HEAP8(src, dst, size) HEAP8.subarray(dst, dst + size).set(HEAP8.subarray(src, src + size));
 
 #else
 #error "Unknown pointer size"
@@ -334,7 +342,7 @@ ffi_call_js, (ffi_cif *cif, ffi_fp fn, void *rvalue, void **avalue),
       var size = FFI_TYPE__SIZE(arg_type_ptr);
       var align = FFI_TYPE__ALIGN(arg_type_ptr);
       STACK_ALLOC(cur_stack_ptr, size, align);
-      HEAP8.subarray(Number(cur_stack_ptr), Number(cur_stack_ptr+size)).set(HEAP8.subarray(Number(arg_ptr), Number(arg_ptr + size)));
+      COPY_HEAP8(arg_ptr, cur_stack_ptr, size)
       args.push(cur_stack_ptr);
       break;
     case FFI_TYPE_POINTER:
@@ -422,7 +430,7 @@ ffi_call_js, (ffi_cif *cif, ffi_fp fn, void *rvalue, void **avalue),
       var size = struct_info[2];
       var align = struct_info[3];
       STACK_ALLOC(cur_stack_ptr, size, align);
-      HEAP8.subarray(Number(cur_stack_ptr), Number(cur_stack_ptr+size)).set(HEAP8.subarray(Number(arg_ptr), Number(arg_ptr + size)));
+      COPY_HEAP8(arg_ptr, cur_stack_ptr, size)
       DEREF_PTR(arg_target, 0) = cur_stack_ptr;
     }
   }
@@ -694,7 +702,7 @@ ffi_prep_closure_loc_js,
         // cur_arg is already a pointer to struct
         // copy it onto stack to pass by value
         STACK_ALLOC(cur_ptr, arg_size, arg_align);
-        HEAP8.subarray(Number(cur_ptr), Number(cur_ptr + arg_size)).set(HEAP8.subarray(Number(cur_arg), Number(cur_arg + arg_size)));
+        COPY_HEAP8(cur_arg, cur_ptr, arg_size)
         DEREF_PTR(args_ptr, carg_idx) = cur_ptr;
         break;
       case FFI_TYPE_FLOAT:
@@ -746,7 +754,7 @@ ffi_prep_closure_loc_js,
         // deref once
         var struct_ptr = DEREF_PTR(varargs, 0);
         STACK_ALLOC(cur_ptr, arg_size, arg_align);
-        HEAP8.subarray(Number(cur_ptr), Number(cur_ptr + arg_size)).set(HEAP8.subarray(Number(struct_ptr), Number(struct_ptr + arg_size)));
+        COPY_HEAP8(struct_ptr, cur_ptr, arg_size)
         DEREF_PTR(args_ptr, carg_idx) = cur_ptr;
       } else {
         DEREF_PTR(args_ptr, carg_idx) = varargs;
@@ -781,7 +789,7 @@ ffi_prep_closure_loc_js,
   } catch(e) {
     return FFI_BAD_TYPEDEF_MACRO;
   }
-  setWasmTableEntry(Number(codeloc), wasm_trampoline);
+  setWasmTableEntry(codeloc, wasm_trampoline);
   CLOSURE__cif(closure) = cif;
   CLOSURE__fun(closure) = fun;
   CLOSURE__user_data(closure) = user_data;
