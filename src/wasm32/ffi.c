@@ -789,7 +789,11 @@ ffi_prep_closure_loc_js,
   } catch(e) {
     return FFI_BAD_TYPEDEF_MACRO;
   }
-  setWasmTableEntry(codeloc, wasm_trampoline);
+  // setWasmTableEntry doesn't accept a BigInt argument so it requires cast here.
+  // This is safe as the maximum size of a table (10,000,000) doesn't exceed the
+  // Number's limit [1].
+  // [1] https://webassembly.github.io/memory64/js-api/#limits
+  setWasmTableEntry(Number(codeloc), wasm_trampoline);
   CLOSURE__cif(closure) = cif;
   CLOSURE__fun(closure) = fun;
   CLOSURE__user_data(closure) = user_data;
