@@ -64,10 +64,11 @@ EM_JS_DEPS(libffi, "$getWasmTableEntry,$setWasmTableEntry,$getEmptyTableSlot,$co
 #define FFI_EMSCRIPTEN_ABI FFI_WASM32_EMSCRIPTEN
 #define PTR_SIG 'i'
 
-#define DEREF_PTR(addr, offset) DEREF_U32(addr, offset)
-
 #define DEC_PTR(p) p
 #define ENC_PTR(p) p
+
+#define DEREF_PTR(addr, offset) DEREF_U32(addr, offset)
+#define DEREF_PTR_NUMBER(addr, offset) DEREF_PTR(addr, offset)
 
 CHECK_FIELD_OFFSET(ffi_cif, abi, 4*0);
 CHECK_FIELD_OFFSET(ffi_cif, nargs, 4*1);
@@ -98,14 +99,15 @@ CHECK_FIELD_OFFSET(ffi_type, elements, 8);
 #define FFI_EMSCRIPTEN_ABI FFI_WASM64_EMSCRIPTEN
 #define PTR_SIG 'j'
 
-#define DEREF_PTR(addr, offset) DEREF_U64(addr, offset)
-
 // DEC_PTR casts a pointer value (comming from Wasm) represented as BigInt (i64) to Number (i53).
 // This should be used for a pointer that is expected to be within the i53 range. If the pointer
 // value is outside the Number's range, the value will become NaN.
 #define DEC_PTR(p) bigintToI53Checked(p)
 // ENC_PTR casts a pointer value represented as Number to BigInt (i64)
 #define ENC_PTR(p) BigInt(p)
+
+#define DEREF_PTR(addr, offset) DEREF_U64(addr, offset)
+#define DEREF_PTR_NUMBER(addr, offset) DEC_PTR(DEREF_PTR(addr, offset))
 
 CHECK_FIELD_OFFSET(ffi_cif, abi, 0);
 CHECK_FIELD_OFFSET(ffi_cif, nargs, 4);
@@ -215,11 +217,11 @@ unbox_small_structs, (ffi_type type_ptr), {
       break;
     }
     var elements = DEC_PTR(FFI_TYPE__ELEMENTS(type_ptr));
-    var first_element = DEC_PTR(DEREF_PTR(elements, 0));
+    var first_element = DEREF_PTR_NUMBER(elements, 0);
     if (first_element === 0) {
       type_id = FFI_TYPE_VOID;
       break;
-    } else if (DEC_PTR(DEREF_PTR(elements, 1)) === 0) {
+    } else if (DEREF_PTR_NUMBER(elements, 1) === 0) {
       type_ptr = first_element;
       type_id = FFI_TYPE__TYPEID(first_element);
     } else {
@@ -274,7 +276,7 @@ ffi_call_js, (ffi_cif *cif, ffi_fp fn, void *rvalue, void **avalue),
   // Javascript to C automatically, here we manually do the inverse conversion
   // from C to Javascript.
   for (var i = 0; i < nfixedargs; i++) {
-    var arg_ptr = DEC_PTR(DEREF_PTR(avalue, i));
+    var arg_ptr = DEREF_PTR_NUMBER(avalue, i);
     var arg_unboxed = unbox_small_structs(DEREF_PTR(arg_types_ptr, i));
     var arg_type_ptr = arg_unboxed[0];
     var arg_type_id = arg_unboxed[1];
@@ -347,7 +349,7 @@ ffi_call_js, (ffi_cif *cif, ffi_fp fn, void *rvalue, void **avalue),
   if (flags & VARARGS_FLAG) {
     var struct_arg_info = [];
     for (var i = nargs - 1;  i >= nfixedargs; i--) {
-      var arg_ptr = DEC_PTR(DEREF_PTR(avalue, i));
+      var arg_ptr = DEREF_PTR_NUMBER(avalue, i);
       var arg_unboxed = unbox_small_structs(DEREF_PTR(arg_types_ptr, i));
       var arg_type_ptr = arg_unboxed[0];
       var arg_type_id = arg_unboxed[1];
@@ -740,7 +742,7 @@ ffi_prep_closure_loc_js,
       if (arg_type_id === FFI_TYPE_STRUCT) {
         // In this case varargs is a pointer to pointer to struct so we need to
         // deref once
-        var struct_ptr = DEC_PTR(DEREF_PTR(varargs, 0));
+        var struct_ptr = DEREF_PTR_NUMBER(varargs, 0);
         STACK_ALLOC(cur_ptr, arg_size, arg_align);
         HEAP8.subarray(cur_ptr, cur_ptr + arg_size).set(HEAP8.subarray(struct_ptr, struct_ptr + arg_size));
         DEREF_PTR(args_ptr, carg_idx) = ENC_PTR(cur_ptr);
